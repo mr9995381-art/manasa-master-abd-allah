@@ -1,0 +1,219 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (from Auth)
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - phone: string (optional)
+    //   - grade: string (required)
+    //   - password: string (required)
+    //   - status: string (required, active/pending)
+    //   - role: string (optional, admin/student)
+    //
+    // Collection: videos, handouts, exams, homeworkAssignments
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string
+    //   - title: string
+    //   - url/fileUrl: string
+    //   - grade: string
+    //   - category: string
+    //
+    // Collection: homeworkSubmissions, examSubmissions
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string
+    //   - studentId: string
+    //   - studentName: string
+    //   - assignmentId/examId: string
+    //   - assignmentTitle/examTitle: string
+    //   - grade: string
+    //   - fileUrl: string
+    //   - date: string
+    //   - gradeValue: string
+    //   - teacherComment: string
+    //
+    // Collection: subscriptions
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string
+    //   - studentName: string
+    //   - grade: string
+    //   - status: string (active/pending)
+    //   - paymentMethod: string
+    //   - date: string
+    //   - activationDate: number
+    //
+    // Collection: notifications
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string
+    //   - title: string
+    //   - message: string
+    //   - date: string
+    //   - isRead: bool
+    //   - userId: string
+    //
+    // Collection: settings
+    // Document ID: global
+    // Fields:
+    //   - contactNumbers: list
+    //   - gradePrices: map
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "oa958792@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function validString(field, min, max) {
+      return request.resource.data[field] is string && 
+             request.resource.data[field].size() >= min && 
+             request.resource.data[field].size() <= max;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['id', 'name', 'grade', 'password', 'status']) &&
+             data.id is string &&
+             data.name is string && data.name.size() < 100 &&
+             data.grade is string &&
+             data.password is string && data.password.size() < 100 &&
+             data.status in ['active', 'pending'];
+    }
+
+    function isValidContent(data) {
+      return hasRequiredFields(['id', 'title', 'grade']) &&
+             data.id is string &&
+             data.title is string && data.title.size() < 200 &&
+             data.grade is string;
+    }
+
+    function isValidSubmission(data) {
+      return hasRequiredFields(['id', 'studentId', 'fileUrl', 'date']) &&
+             data.id is string &&
+             data.studentId is string &&
+             data.fileUrl is string &&
+             data.date is string;
+    }
+
+    function isValidSubscription(data) {
+      return hasRequiredFields(['id', 'studentName', 'grade', 'status', 'paymentMethod', 'date']) &&
+             data.id is string &&
+             data.studentName is string &&
+             data.grade is string &&
+             data.status in ['active', 'pending'] &&
+             data.paymentMethod is string &&
+             data.date is string;
+    }
+
+    function isValidNotification(data) {
+      return hasRequiredFields(['id', 'title', 'message', 'date', 'isRead']) &&
+             data.id is string &&
+             data.title is string && data.title.size() < 200 &&
+             data.message is string && data.message.size() < 1000 &&
+             data.date is string &&
+             data.isRead is bool;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /videos/{videoId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /handouts/{handoutId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /exams/{examId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /homeworkAssignments/{assignmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /homeworkSubmissions/{submissionId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidSubmission(request.resource.data) && request.resource.data.studentId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /examSubmissions/{submissionId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidSubmission(request.resource.data) && request.resource.data.studentId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /subscriptions/{subscriptionId} {
+      allow read: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name == resource.data.studentName);
+      allow create: if isAuthenticated() && isValidSubscription(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.userId == null);
+      allow create: if isAdmin();
+      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents a student or admin user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "grade": { "type": "string" },
+        "password": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "pending"] },
+        "role": { "type": "string", "enum": ["admin", "student"] }
+      },
+      "required": ["id", "name", "grade", "password", "status"]
+    },
+    "VideoItem": {
+      "title": "VideoItem",
+      "description": "Represents a video lesson.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "grade": { "type": "string" },
+        "type": { "type": "string", "enum": ["youtube", "file"] },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "title", "url", "grade", "type"]
+    },
+    "Handout": {
+      "title": "Handout",
+      "description": "Represents a PDF handout.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "grade": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "title", "url", "grade"]
+    },
+    "Exam": {
+      "title": "Exam",
+      "description": "Represents an exam file.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "fileType": { "type": "string" },
+        "grade": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "title", "fileUrl", "grade"]
+    },
+    "HomeworkAssignment": {
+      "title": "HomeworkAssignment",
+      "description": "Represents a homework assignment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "fileType": { "type": "string" },
+        "grade": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "title", "fileUrl", "grade"]
+    },
+    "HomeworkSubmission": {
+      "title": "HomeworkSubmission",
+      "description": "Represents a student's homework submission.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "assignmentId": { "type": "string" },
+        "assignmentTitle": { "type": "string" },
+        "grade": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "fileType": { "type": "string" },
+        "date": { "type": "string" },
+        "gradeValue": { "type": "string" },
+        "teacherComment": { "type": "string" }
+      },
+      "required": ["id", "studentId", "assignmentId", "fileUrl", "date"]
+    },
+    "ExamSubmission": {
+      "title": "ExamSubmission",
+      "description": "Represents a student's exam submission.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "examId": { "type": "string" },
+        "examTitle": { "type": "string" },
+        "grade": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "fileType": { "type": "string" },
+        "date": { "type": "string" },
+        "gradeValue": { "type": "string" },
+        "teacherComment": { "type": "string" }
+      },
+      "required": ["id", "studentId", "examId", "fileUrl", "date"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "Represents a student's subscription request or active subscription.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentName": { "type": "string" },
+        "grade": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "pending"] },
+        "paymentMethod": { "type": "string" },
+        "date": { "type": "string" },
+        "activationDate": { "type": "number" }
+      },
+      "required": ["id", "studentName", "grade", "status", "paymentMethod", "date"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Represents a notification sent to a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "date": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "title", "message", "date", "isRead"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Represents global application settings.",
+      "type": "object",
+      "properties": {
+        "contactNumbers": { "type": "array", "items": { "type": "string" } },
+        "gradePrices": { "type": "object" }
+      }
+    }
+  },
+  "firestore": {
+    "/users": { "schema": "User", "description": "Collection of users." },
+    "/videos": { "schema": "VideoItem", "description": "Collection of videos." },
+    "/handouts": { "schema": "Handout", "description": "Collection of handouts." },
+    "/exams": { "schema": "Exam", "description": "Collection of exams." },
+    "/homeworkAssignments": { "schema": "HomeworkAssignment", "description": "Collection of homework assignments." },
+    "/homeworkSubmissions": { "schema": "HomeworkSubmission", "description": "Collection of homework submissions." },
+    "/examSubmissions": { "schema": "ExamSubmission", "description": "Collection of exam submissions." },
+    "/subscriptions": { "schema": "Subscription", "description": "Collection of subscriptions." },
+    "/notifications": { "schema": "Notification", "description": "Collection of notifications." },
+    "/settings": { "schema": "Settings", "description": "Global settings document." }
+  }
+}
