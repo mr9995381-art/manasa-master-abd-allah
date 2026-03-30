@@ -82,8 +82,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "oa958792@gmail.com" && request.auth.token.email_verified == true));
+        (request.auth.token.email == "oa958792@gmail.com" ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
 
     function hasRequiredFields(fields) {
@@ -107,10 +108,11 @@ service cloud.firestore {
     function isValidUser(data) {
       return hasRequiredFields(['id', 'name', 'grade', 'password', 'status']) &&
              data.id is string &&
-             data.name is string && data.name.size() < 100 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.grade is string &&
-             data.password is string && data.password.size() < 100 &&
-             data.status in ['active', 'pending'];
+             data.password is string &&
+             data.status in ['active', 'pending'] &&
+             (!('role' in data) || data.role in ['admin', 'student']);
     }
 
     function isValidContent(data) {
@@ -129,12 +131,12 @@ service cloud.firestore {
     }
 
     function isValidSubscription(data) {
-      return hasRequiredFields(['id', 'studentName', 'grade', 'status', 'paymentMethod', 'date']) &&
+      return hasRequiredFields(['id', 'studentId', 'studentName', 'grade', 'status', 'date']) &&
              data.id is string &&
+             data.studentId is string &&
              data.studentName is string &&
              data.grade is string &&
              data.status in ['active', 'pending'] &&
-             data.paymentMethod is string &&
              data.date is string;
     }
 
@@ -153,8 +155,16 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
-      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    (
+                      (isOwner(userId) && (request.resource.data.role == 'student' || request.auth.token.email == "oa958792@gmail.com")) || 
+                      isAdmin()
+                    );
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    (
+                      (isOwner(userId) && request.resource.data.role == resource.data.role) || 
+                      isAdmin()
+                    );
       allow delete: if isAdmin();
     }
 
@@ -193,16 +203,16 @@ service cloud.firestore {
     }
 
     match /subscriptions/{subscriptionId} {
-      allow read: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name == resource.data.studentName);
-      allow create: if isAuthenticated() && isValidSubscription(request.resource.data);
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidSubscription(request.resource.data) && request.resource.data.studentId == request.auth.uid;
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.userId == null);
+      allow read: if isAdmin() || (isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.userId == null));
       allow create: if isAdmin();
-      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow delete: if isAdmin();
     }
 

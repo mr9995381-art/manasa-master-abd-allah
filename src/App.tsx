@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Component } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   BookOpen, 
@@ -42,15 +42,17 @@ import {
   CheckCircle,
   UserCheck,
   AlertCircle,
-  FileUp
+  FileUp,
+  AlertTriangle,
+  ShieldAlert
 } from "lucide-react";
 
 import { 
-  GoogleAuthProvider, 
-  signInWithPopup, 
   signOut,
-  onAuthStateChanged
-} from "firebase/auth";
+  onAuthStateChanged,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
+} from "./firebase";
 import { 
   db, 
   auth,
@@ -158,6 +160,7 @@ interface User {
 
 interface Subscription {
   id: string;
+  studentId: string;
   studentName: string;
   grade: Grade;
   date: string;
@@ -181,9 +184,9 @@ const GRADE_LABELS: Record<Grade, string> = {
   sec3: "الصف الثالث الثانوي",
 };
 
-const checkSubscription = (studentName: string, grade: Grade, subscriptions: Subscription[]): { isValid: boolean, daysRemaining: number, sub?: Subscription } => {
+const checkSubscription = (studentId: string, studentName: string, grade: Grade, subscriptions: Subscription[]): { isValid: boolean, daysRemaining: number, sub?: Subscription } => {
   const activeSubs = subscriptions.filter(s => 
-    s.studentName === studentName && 
+    s.studentId === studentId && 
     s.grade === grade && 
     s.status === "active"
   );
@@ -440,110 +443,88 @@ const HomePage = ({
   showToast: (m: string, t?: "success" | "error" | "info") => void
 }) => {
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [grade, setGrade] = useState<Grade>("prep1");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [mode, setMode] = useState<"login" | "register">("login");
 
-  const handleGoogleSignIn = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-      
-      // Check if user exists in Firestore
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
-        const userData = userDoc.data() as User;
-        const { isValid: isSubscribed } = checkSubscription(userData.name, userData.grade, subscriptions);
-        setCurrentUser({ id: user.uid, name: userData.name, grade: userData.grade, isSubscribed });
-        
-        if (isSubscribed) {
-          setPage("courses");
-        } else {
-          setPage("payment");
-        }
-        showToast(`أهلاً بك يا ${userData.name}`);
-      } else {
-        // New user - need to collect grade and phone
-        const newUser: User = {
-          id: user.uid,
-          name: user.displayName || "طالب جديد",
-          phone: "",
-          grade: "prep1",
-          password: "google-auth",
-          status: "pending"
-        };
-        await setDoc(doc(db, "users", user.uid), newUser);
-        setCurrentUser({ id: user.uid, name: newUser.name, grade: newUser.grade, isSubscribed: false });
-        setPage("payment");
-        showToast("تم تسجيل الدخول بنجاح. يرجى إكمال بياناتك والاشتراك.");
-      }
-    } catch (e) {
-      console.error("Google Sign-In Error:", e);
-      alert("فشل تسجيل الدخول بجوجل. يرجى المحاولة مرة أخرى.");
-    }
-  };
-
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       const trimmedName = name.trim();
+      const trimmedEmail = email.trim();
       const trimmedPassword = password.trim();
       
-      if (!trimmedName || !trimmedPassword || (mode === "register" && !phone)) {
+      if (!trimmedPassword || (mode === "register" && (!trimmedName || !trimmedEmail || !phone))) {
         alert("يرجى إدخال جميع البيانات المطلوبة");
+        return;
+      }
+
+      if (mode === "login" && !trimmedEmail) {
+        alert("يرجى إدخال البريد الإلكتروني");
         return;
       }
       
       if (mode === "register") {
-        const existingUser = users.find(u => u.name.trim().toLowerCase() === trimmedName.toLowerCase());
-        if (existingUser) {
-          alert("هذا الاسم مسجل بالفعل، يرجى تسجيل الدخول.");
-          setMode("login");
-          return;
-        }
-        const userId = Date.now().toString();
-        const newUser: User = { 
-          id: userId, 
-          name: trimmedName, 
-          phone: phone.trim(), 
-          grade, 
-          password: trimmedPassword, 
-          status: "pending" 
-        };
-        
         try {
-          await setDoc(doc(db, "users", userId), newUser);
-          setCurrentUser({ id: newUser.id, name: newUser.name, grade: newUser.grade, isSubscribed: false });
+          const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+          const user = userCredential.user;
+          
+          const newUser: User = { 
+            id: user.uid, 
+            name: trimmedName, 
+            phone: phone.trim(), 
+            grade, 
+            password: "firebase-auth", 
+            status: "pending",
+            role: trimmedEmail === "oa958792@gmail.com" ? "admin" : "student"
+          };
+          
+          await setDoc(doc(db, "users", user.uid), newUser);
+          setCurrentUser({ id: user.uid, name: newUser.name, grade: newUser.grade, isSubscribed: false });
           setPage("payment");
           window.scrollTo(0, 0);
           alert("تم إنشاء الحساب بنجاح! يمكنك الآن إكمال عملية الاشتراك لتفعيل حسابك.");
           showToast("تم إنشاء الحساب بنجاح");
-        } catch (e) {
-          handleFirestoreError(e, OperationType.WRITE, "users/" + userId);
+        } catch (e: any) {
+          if (e.code === 'auth/email-already-in-use') {
+            alert("هذا البريد الإلكتروني مسجل بالفعل، يرجى تسجيل الدخول.");
+            setMode("login");
+          } else {
+            console.error("Registration Error:", e);
+            alert("فشل إنشاء الحساب: " + e.message);
+          }
         }
       } else {
-        const user = users.find(u => u.name.trim().toLowerCase() === trimmedName.toLowerCase() && u.password.trim() === trimmedPassword);
-        
-        if (user) {
-          const { isValid: isSubscribed } = checkSubscription(user.name, user.grade, subscriptions);
-          setCurrentUser({ id: user.id, name: user.name, grade: user.grade, isSubscribed });
+        try {
+          const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+          const user = userCredential.user;
           
-          if (isSubscribed) {
-            setPage("courses");
-            window.scrollTo(0, 0);
-            alert(`أهلاً بك يا ${user.name}! تم تسجيل دخولك بنجاح.`);
-            showToast(`أهلاً بك يا ${user.name}`);
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as User;
+            const { isValid: isSubscribed } = checkSubscription(user.uid, userData.name, userData.grade, subscriptions);
+            setCurrentUser({ id: user.uid, name: userData.name, grade: userData.grade, isSubscribed });
+            
+            if (isSubscribed) {
+              setPage("courses");
+              window.scrollTo(0, 0);
+              alert(`أهلاً بك يا ${userData.name}! تم تسجيل دخولك بنجاح.`);
+              showToast(`أهلاً بك يا ${userData.name}`);
+            } else {
+              setPage("payment");
+              window.scrollTo(0, 0);
+              alert(`أهلاً بك يا ${userData.name}! يرجى إكمال الاشتراك للوصول للمحتوى.`);
+              showToast("يرجى إكمال الاشتراك", "info");
+            }
           } else {
-            setPage("payment");
-            window.scrollTo(0, 0);
-            alert(`أهلاً بك يا ${user.name}! يرجى إكمال الاشتراك للوصول للمحتوى.`);
-            showToast("يرجى إكمال الاشتراك", "info");
+            alert("لم يتم العثور على بيانات المستخدم في قاعدة البيانات.");
           }
-        } else {
-          alert("خطأ في الاسم أو كلمة المرور. تأكد من كتابة البيانات بشكل صحيح.");
+        } catch (e: any) {
+          console.error("Login Error:", e);
+          alert("خطأ في البريد الإلكتروني أو كلمة المرور.");
         }
       }
     } catch (error) {
@@ -592,28 +573,22 @@ const HomePage = ({
 
                 <h3 className="text-xl font-bold text-slate-900 arabic-text mb-6">{mode === "register" ? "سجل بياناتك للبدء" : "أهلاً بك مجدداً"}</h3>
                 <form onSubmit={handleJoin} className="space-y-4">
-                  <button 
-                    type="button"
-                    onClick={handleGoogleSignIn}
-                    className="w-full py-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-center gap-3 hover:bg-slate-50 transition-all font-bold arabic-text"
-                  >
-                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-6 h-6" />
-                    {mode === "register" ? "إنشاء حساب بجوجل" : "دخول بجوجل"}
-                  </button>
-                  <div className="flex items-center gap-4 py-2">
-                    <div className="h-px bg-slate-100 flex-grow"></div>
-                    <span className="text-slate-400 text-xs arabic-text">أو بالاسم وكلمة المرور</span>
-                    <div className="h-px bg-slate-100 flex-grow"></div>
-                  </div>
                   <input 
-                    type="text" 
-                    placeholder="اسمك بالكامل"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    type="email" 
+                    placeholder="البريد الإلكتروني"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-right arabic-text"
                   />
                   {mode === "register" && (
                     <>
+                      <input 
+                        type="text" 
+                        placeholder="اسمك بالكامل"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-right arabic-text"
+                      />
                       <input 
                         type="tel" 
                         placeholder="رقم الموبايل (واتساب)"
@@ -680,7 +655,7 @@ const HomePage = ({
                         <CheckCircle2 className="w-6 h-6 text-green-600" />
                       </div>
                       <p className="text-green-700 arabic-text">
-                        متبقي على انتهاء اشتراكك: <span className="font-bold text-2xl mx-1">{checkSubscription(currentUser.name, currentUser.grade, subscriptions).daysRemaining}</span> يوم
+                        متبقي على انتهاء اشتراكك: <span className="font-bold text-2xl mx-1">{checkSubscription(currentUser.id, currentUser.name, currentUser.grade, subscriptions).daysRemaining}</span> يوم
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-4 justify-end">
@@ -744,7 +719,7 @@ const PaymentPage = ({
   const [proof, setProof] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const pendingSub = subscriptions.find(s => s.studentName === currentUser?.name && s.grade === currentUser?.grade && s.status === "pending");
+  const pendingSub = subscriptions.find(s => s.studentId === currentUser?.id && s.grade === currentUser?.grade && s.status === "pending");
 
   const handleConfirmPayment = async () => {
     if (!currentUser) return;
@@ -759,6 +734,7 @@ const PaymentPage = ({
     const id = Date.now().toString();
     const newSubscription: Subscription = {
       id,
+      studentId: currentUser.id,
       studentName: currentUser.name,
       grade: currentUser.grade,
       date: new Date().toLocaleDateString('ar-EG'),
@@ -776,7 +752,7 @@ const PaymentPage = ({
     }
   };
 
-  const hasPendingSub = subscriptions.some(s => s.studentName === currentUser?.name && s.status === "pending");
+  const hasPendingSub = subscriptions.some(s => s.studentId === currentUser?.id && s.status === "pending");
 
   return (
     <div className="pt-32 pb-20 px-4">
@@ -793,7 +769,7 @@ const PaymentPage = ({
             <h4 className="text-xl font-bold text-amber-900 arabic-text mb-2">طلبك قيد المراجعة</h4>
             <p className="text-amber-700 arabic-text mb-4">لقد أرسلت طلب اشتراك بالفعل. سيقوم المستر بتفعيله فور التأكد من التحويل.</p>
             <a 
-              href={`https://wa.me/20${contactNumbers[0]?.replace(/^0/, '') || '1146780736'}?text=${encodeURIComponent(`أهلاً مستر عبدالله، أنا الطالب ${currentUser.name}، قمت بتحويل مبلغ الاشتراك ورفعت صورة الإيصال الآن على المنصة. يرجى مراجعة الطلب وتفعيل حسابي.`)}`}
+              href={`https://wa.me/20${contactNumbers[0]?.replace(/^0/, '') || '1102140676'}?text=${encodeURIComponent(`أهلاً مستر عبدالله، أنا الطالب ${currentUser.name}، قمت بتحويل مبلغ الاشتراك ورفعت صورة الإيصال الآن على المنصة. يرجى مراجعة الطلب وتفعيل حسابي.`)}`}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-2 px-6 py-2 bg-[#25D366] text-white rounded-xl font-bold arabic-text hover:bg-[#128C7E] transition-all"
@@ -1459,7 +1435,8 @@ const AdminDashboard = ({
   contactNumbers,
   setContactNumbers,
   gradePrices,
-  setGradePrices
+  setGradePrices,
+  currentUser
 }: { 
   videos: VideoItem[], 
   setVideos: (v: VideoItem[]) => void,
@@ -1482,7 +1459,8 @@ const AdminDashboard = ({
   contactNumbers: string[],
   setContactNumbers: (n: string[]) => void,
   gradePrices: Record<Grade, number>,
-  setGradePrices: (p: Record<Grade, number>) => void
+  setGradePrices: (p: Record<Grade, number>) => void,
+  currentUser: any
 }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [password, setPassword] = useState("");
@@ -1721,6 +1699,10 @@ const AdminDashboard = ({
   };
 
   const savePrices = async () => {
+    if (!auth.currentUser) {
+      showToast("يجب تسجيل الدخول أولاً", "error");
+      return;
+    }
     try {
       await setDoc(doc(db, "settings", "global"), { gradePrices }, { merge: true });
       showToast("تم حفظ الأسعار بنجاح");
@@ -1730,6 +1712,10 @@ const AdminDashboard = ({
   };
 
   const saveSettings = async () => {
+    if (!auth.currentUser) {
+      showToast("يجب تسجيل الدخول أولاً", "error");
+      return;
+    }
     const finalNumbers = tempContactNumbers.filter(n => n.trim() !== "");
     try {
       await setDoc(doc(db, "settings", "global"), { contactNumbers: finalNumbers }, { merge: true });
@@ -1757,7 +1743,7 @@ const AdminDashboard = ({
                 placeholder="أدخل كلمة المرور"
               />
             </div>
-            <button className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold arabic-text hover:bg-indigo-700 transition-all">دخول</button>
+            <button className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold arabic-text hover:bg-indigo-700 transition-all text-lg">دخول</button>
           </form>
         </div>
       </div>
@@ -2300,7 +2286,7 @@ const AdminDashboard = ({
                   </h3>
                   <div className="space-y-4">
                     {subscriptions.filter(s => s.status === "active").map(s => {
-                      const { isValid, daysRemaining } = checkSubscription(s.studentName, s.grade, subscriptions);
+                      const { isValid, daysRemaining } = checkSubscription(s.studentId, s.studentName, s.grade, subscriptions);
                       return (
                         <div key={s.id} className={`bg-white p-6 rounded-3xl border ${isValid ? 'border-slate-100' : 'border-red-200 bg-red-50'} flex items-center justify-between`}>
                           <button onClick={() => deleteItem(s.id, "sub")} className="text-red-600"><Trash2 className="w-5 h-5" /></button>
@@ -2571,11 +2557,73 @@ const Footer = ({ setPage, contactNumbers }: { setPage: (p: Page) => void, conta
     <div className="max-w-7xl mx-auto mt-20 pt-8 border-t border-white/5 text-center">
       <p className="text-slate-500 text-sm mb-4">© 2026 Abdullah Sayed English Academy. All rights reserved.</p>
       <div className="bg-white/5 inline-block px-6 py-3 rounded-2xl border border-white/10">
-        <p className="text-indigo-400 arabic-text font-bold">تصميم عمر أحمد - 01146780736</p>
+        <p className="text-indigo-400 arabic-text font-bold">تصميم عمر أحمد - 01102140676</p>
       </div>
     </div>
   </footer>
 );
+
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorInfo: any;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, errorInfo: null };
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, errorInfo: error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    const self = this as any;
+    if (self.state.hasError) {
+      let errorMessage = "حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.";
+      const errorInfo = self.state.errorInfo;
+      if (errorInfo && errorInfo.message) {
+        try {
+          const parsedError = JSON.parse(errorInfo.message);
+          if (parsedError.error && parsedError.error.includes("Missing or insufficient permissions")) {
+            errorMessage = "ليس لديك صلاحية للوصول لهذه البيانات. يرجى التأكد من تسجيل الدخول أو الاشتراك.";
+          }
+        } catch (e) {
+          // Not a JSON error
+        }
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+          <div className="bg-white p-8 rounded-[32px] shadow-2xl max-w-md w-full text-center border border-red-100">
+            <div className="w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <AlertTriangle className="w-10 h-10" />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-900 arabic-text mb-4">عذراً، حدث خطأ ما</h2>
+            <p className="text-slate-600 arabic-text mb-8">{errorMessage}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold arabic-text hover:bg-indigo-700 transition-all"
+            >
+              إعادة تحميل الصفحة
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return self.props.children;
+  }
+}
 
 export default function App() {
   const [page, setPage] = useState<Page>("home");
@@ -2605,23 +2653,43 @@ export default function App() {
 
   const [users, setUsers] = useState<User[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [currentUser, setCurrentUser] = useState<{ id: string, name: string, grade: Grade, isSubscribed: boolean } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ id: string, name: string, grade: Grade, isSubscribed: boolean, role?: string } | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data() as User;
-          const { isValid: isSubscribed } = checkSubscription(userData.name, userData.grade, subscriptions);
-          setCurrentUser({ id: user.uid, name: userData.name, grade: userData.grade, isSubscribed });
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as User;
+            setCurrentUser({ 
+              id: user.uid, 
+              name: userData.name, 
+              grade: userData.grade, 
+              isSubscribed: false, // Initial value, will be updated by effect
+              role: userData.role 
+            });
+          } else if (user.email === "oa958792@gmail.com") {
+            setCurrentUser({ 
+              id: user.uid, 
+              name: "المستر عبدالله سيد", 
+              grade: "sec3", 
+              isSubscribed: true,
+              role: "admin" 
+            });
+          }
+        } catch (e) {
+          console.error("Auth state user fetch error:", e);
         }
       } else {
         setCurrentUser(null);
       }
+      setIsAuthReady(true);
     });
     return () => unsubscribeAuth();
-  }, [subscriptions]);
+  }, []);
+
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [handouts, setHandouts] = useState<Handout[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
@@ -2629,7 +2697,7 @@ export default function App() {
   const [examSubmissions, setExamSubmissions] = useState<ExamSubmission[]>([]);
   const [homeworkAssignments, setHomeworkAssignments] = useState<HomeworkAssignment[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [contactNumbers, setContactNumbers] = useState<string[]>(["01146780736"]);
+  const [contactNumbers, setContactNumbers] = useState<string[]>(["01102140676"]);
   const [gradePrices, setGradePrices] = useState<Record<Grade, number>>({
     pri1: 100, pri2: 100, pri3: 100, pri4: 120, pri5: 120, pri6: 120,
     prep1: 150, prep2: 150, prep3: 180,
@@ -2638,17 +2706,44 @@ export default function App() {
 
   // Firestore Listeners
   useEffect(() => {
-    const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
-      setUsers(snapshot.docs.map(doc => doc.data() as User));
-    }, (e) => handleFirestoreError(e, OperationType.LIST, "users"));
+    // Public/Shared Settings (Always listen)
+    const unsubSettings = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.contactNumbers) setContactNumbers(data.contactNumbers);
+        if (data.gradePrices) setGradePrices(data.gradePrices);
+      }
+    }, (e) => console.error("Settings listener error:", e));
 
+    if (!isAuthReady || !auth.currentUser) {
+      return () => unsubSettings();
+    }
+
+    const isAdminUser = currentUser?.role === "admin" || auth.currentUser.email === "oa958792@gmail.com";
+
+    // Admin-only collections
+    let unsubUsers = () => {};
+    let unsubSubs = () => {};
+
+    if (isAdminUser) {
+      unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
+        setUsers(snapshot.docs.map(doc => doc.data() as User));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "users"));
+
+      unsubSubs = onSnapshot(collection(db, "subscriptions"), (snapshot) => {
+        setSubscriptions(snapshot.docs.map(doc => doc.data() as Subscription));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "subscriptions"));
+    } else {
+      const q = query(collection(db, "subscriptions"), where("studentId", "==", currentUser?.id || ""));
+      unsubSubs = onSnapshot(q, (snapshot) => {
+        setSubscriptions(snapshot.docs.map(doc => doc.data() as Subscription));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "subscriptions"));
+    }
+
+    // Authenticated collections (Students & Admins)
     const unsubVideos = onSnapshot(collection(db, "videos"), (snapshot) => {
       setVideos(snapshot.docs.map(doc => doc.data() as VideoItem));
     }, (e) => handleFirestoreError(e, OperationType.LIST, "videos"));
-
-    const unsubSubs = onSnapshot(collection(db, "subscriptions"), (snapshot) => {
-      setSubscriptions(snapshot.docs.map(doc => doc.data() as Subscription));
-    }, (e) => handleFirestoreError(e, OperationType.LIST, "subscriptions"));
 
     const unsubHandouts = onSnapshot(collection(db, "handouts"), (snapshot) => {
       setHandouts(snapshot.docs.map(doc => doc.data() as Handout));
@@ -2658,29 +2753,47 @@ export default function App() {
       setExams(snapshot.docs.map(doc => doc.data() as Exam));
     }, (e) => handleFirestoreError(e, OperationType.LIST, "exams"));
 
-    const unsubHomeworks = onSnapshot(collection(db, "homeworkSubmissions"), (snapshot) => {
-      setHomeworks(snapshot.docs.map(doc => doc.data() as HomeworkSubmission));
-    }, (e) => handleFirestoreError(e, OperationType.LIST, "homeworkSubmissions"));
-
-    const unsubExamSubs = onSnapshot(collection(db, "examSubmissions"), (snapshot) => {
-      setExamSubmissions(snapshot.docs.map(doc => doc.data() as ExamSubmission));
-    }, (e) => handleFirestoreError(e, OperationType.LIST, "examSubmissions"));
-
     const unsubHomeworkAssignments = onSnapshot(collection(db, "homeworkAssignments"), (snapshot) => {
       setHomeworkAssignments(snapshot.docs.map(doc => doc.data() as HomeworkAssignment));
     }, (e) => handleFirestoreError(e, OperationType.LIST, "homeworkAssignments"));
 
-    const unsubNotifications = onSnapshot(collection(db, "notifications"), (snapshot) => {
-      setNotifications(snapshot.docs.map(doc => doc.data() as Notification));
-    }, (e) => handleFirestoreError(e, OperationType.LIST, "notifications"));
+    // Notifications (Admin sees all, Student sees own or public)
+    let unsubNotifications = () => {};
+    if (isAdminUser) {
+      unsubNotifications = onSnapshot(collection(db, "notifications"), (snapshot) => {
+        setNotifications(snapshot.docs.map(doc => doc.data() as Notification));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "notifications"));
+    } else {
+      // Students see notifications addressed to them or public ones (userId == null)
+      const q = query(collection(db, "notifications"), where("userId", "in", [auth.currentUser?.uid || "", null]));
+      unsubNotifications = onSnapshot(q, (snapshot) => {
+        setNotifications(snapshot.docs.map(doc => doc.data() as Notification));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "notifications"));
+    }
 
-    const unsubSettings = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.contactNumbers) setContactNumbers(data.contactNumbers);
-        if (data.gradePrices) setGradePrices(data.gradePrices);
-      }
-    }, (e) => handleFirestoreError(e, OperationType.GET, "settings/global"));
+    // Submissions (Admin sees all, Student sees own)
+    let unsubHomeworks = () => {};
+    let unsubExamSubs = () => {};
+
+    if (isAdminUser) {
+      unsubHomeworks = onSnapshot(collection(db, "homeworkSubmissions"), (snapshot) => {
+        setHomeworks(snapshot.docs.map(doc => doc.data() as HomeworkSubmission));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "homeworkSubmissions"));
+
+      unsubExamSubs = onSnapshot(collection(db, "examSubmissions"), (snapshot) => {
+        setExamSubmissions(snapshot.docs.map(doc => doc.data() as ExamSubmission));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "examSubmissions"));
+    } else {
+      const qH = query(collection(db, "homeworkSubmissions"), where("studentId", "==", auth.currentUser.uid));
+      unsubHomeworks = onSnapshot(qH, (snapshot) => {
+        setHomeworks(snapshot.docs.map(doc => doc.data() as HomeworkSubmission));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "homeworkSubmissions"));
+
+      const qE = query(collection(db, "examSubmissions"), where("studentId", "==", auth.currentUser.uid));
+      unsubExamSubs = onSnapshot(qE, (snapshot) => {
+        setExamSubmissions(snapshot.docs.map(doc => doc.data() as ExamSubmission));
+      }, (e) => handleFirestoreError(e, OperationType.LIST, "examSubmissions"));
+    }
 
     return () => {
       unsubUsers();
@@ -2694,41 +2807,34 @@ export default function App() {
       unsubNotifications();
       unsubSettings();
     };
-  }, []);
+  }, [isAuthReady, currentUser?.id, currentUser?.role, currentUser?.name]);
 
 
   useEffect(() => {
-    if (currentUser) {
-      const { isValid } = checkSubscription(currentUser.name, currentUser.grade, subscriptions);
+    if (currentUser && currentUser.role !== "admin") {
+      const { isValid, sub, daysRemaining } = checkSubscription(currentUser.id, currentUser.name, currentUser.grade, subscriptions);
 
       if (isValid && !currentUser.isSubscribed) {
         setCurrentUser({ ...currentUser, isSubscribed: true });
       } else if (!isValid && currentUser.isSubscribed) {
         setCurrentUser({ ...currentUser, isSubscribed: false });
       }
-    }
-  }, [subscriptions, currentUser?.id, currentUser?.grade]);
 
-  useEffect(() => {
-    if (currentUser && currentUser.isSubscribed) {
-      const { sub } = checkSubscription(currentUser.name, currentUser.grade, subscriptions);
-      if (sub && sub.activationDate) {
-        const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-        const expiryDate = sub.activationDate + thirtyDays;
-        const daysRemaining = Math.ceil((expiryDate - Date.now()) / (1000 * 60 * 60 * 24));
-        
+      if (isValid && sub && sub.activationDate) {
         if (daysRemaining <= 3 && daysRemaining > 0) {
           const renewalNotifId = `renewal_${currentUser.id}_${sub.id}`;
-          addNotification(
-            "تجديد الاشتراك",
-            `اشتراكك سينتهي خلال ${daysRemaining} أيام. يرجى التجديد لضمان استمرار الوصول للمحتوى.`,
-            currentUser.id,
-            renewalNotifId
-          );
+          if (!notifications.some(n => n.id === renewalNotifId)) {
+            addNotification(
+              "تنبيه تجديد الاشتراك",
+              `باقي ${daysRemaining} أيام على انتهاء اشتراكك. يرجى التجديد لضمان استمرار الوصول للمحتوى.`,
+              currentUser.id,
+              renewalNotifId
+            );
+          }
         }
       }
     }
-  }, [currentUser, subscriptions]);
+  }, [subscriptions, currentUser?.id, currentUser?.grade, currentUser?.role]);
 
   useEffect(() => {
     if (currentUser && !currentUser.isSubscribed && ["courses", "handouts", "exams", "homework"].includes(page)) {
@@ -2736,8 +2842,23 @@ export default function App() {
     }
   }, [page, currentUser?.isSubscribed]);
 
+  useEffect(() => {
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'settings', 'global'));
+      } catch (error: any) {
+        if (error.message.includes('the client is offline')) {
+          console.error("Firebase Connection Error: The client is offline. Please check your Firebase configuration.");
+          showToast("خطأ في الاتصال بقاعدة البيانات. يرجى التحقق من اتصالك بالإنترنت.", "error");
+        }
+      }
+    };
+    testConnection();
+  }, []);
+
   return (
-    <div className="min-h-screen bg-slate-50 selection:bg-indigo-100 selection:text-indigo-900">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-slate-50 selection:bg-indigo-100 selection:text-indigo-900">
       <AnimatePresence>
         {toast && (
           <motion.div
@@ -2797,6 +2918,7 @@ export default function App() {
                 setContactNumbers={setContactNumbers}
                 gradePrices={gradePrices}
                 setGradePrices={setGradePrices}
+                currentUser={currentUser}
               />
             </motion.div>
           )}
@@ -2836,5 +2958,6 @@ export default function App() {
       </main>
       <Footer setPage={setPage} contactNumbers={contactNumbers} />
     </div>
+    </ErrorBoundary>
   );
 }
